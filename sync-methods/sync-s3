@@ -1,0 +1,17 @@
+#!/bin/bash
+
+set -e
+
+. /etc/openbravo-backup.conf
+
+ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
+export -f ob_log
+
+[ ! -f /usr/bin/s3cmd ] && ob_log "s3cmd is not installed. Install it with: sudo apt-get install s3cmd" && exit 1
+[ ! -f $HOME/.s3cfg ] && ob_log "s3cmd is not configured. Configure it with: s3cmd --configure" && exit 1
+[ "$SYNC_S3_BUCKET" = "s3://BUCKET/openbravo-backups/" ] && ob_log "SYNC_S3_BUCKET still has the default value. It is needed to create a bucket in your s3 account and configure it in the SYNC_S3_BUCKET variable in /etc/openbravo-backup.conf config file" && exit 1
+
+s3cmd sync --delete-removed --verbose /backups/ $SYNC_S3_BUCKET
+
+exit 0
+

@@ -1,0 +1,26 @@
+#!/bin/bash
+
+set -e
+
+. /etc/openbravo-backup.conf
+
+ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
+export -f ob_log
+
+
+DEVICE=$(sudo blkid -L $SYNC_LABEL) || ( ob_log "Label '$SYNC_LABEL' not found. Create it with 'sudo e2label /dev/DEVICE $SYNC_LABEL' or edit the variable SYNC_LABEL in /etc/openbravo-backup.conf." ; exit 1)
+[ "$(df | grep $DEVICE)" ] && ob_log " *** Sync NOT done. The label '$SYNC_LABEL' ($DEVICE) is already mounted." && exit 1
+
+TEMP_DIR=$(mktemp -d)
+
+sudo mount -L $SYNC_LABEL $TEMP_DIR
+[ ! -d $TEMP_DIR/$SYNC_LABEL_PATH ] && sudo mkdir -p $TEMP_DIR/$SYNC_LABEL_PATH && sudo chown openbravo: $TEMP_DIR/$SYNC_LABEL_PATH
+set +e
+rsync -aAHXv --delete /backups/ $TEMP_DIR/$SYNC_LABEL_PATH/
+ERRCODE=$?
+set -e
+sudo umount $TEMP_DIR
+rmdir $TEMP_DIR
+
+exit $ERRCODE
+

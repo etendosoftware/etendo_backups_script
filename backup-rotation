@@ -1,0 +1,43 @@
+#!/bin/bash
+
+set -e
+
+ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
+export -f ob_log
+
+EXPECTED_ARGS=1
+if [ $# -ne $EXPECTED_ARGS ]
+then
+  ob_log "Usage: $(basename $0) DIR_BACKUP" >&2
+  exit 1
+fi
+
+DIR_BACKUP=$1
+
+# load config
+. /etc/openbravo-backup.conf
+
+if [ "$ROTATION_NUM_TO_MAINTAIN" = "" ] || [ "$(echo "$ROTATION_NUM_TO_MAINTAIN" | grep -o [^0-9])" != "" ] || [ "$ROTATION_NUM_TO_MAINTAIN" = "0" ]; then
+  ob_log " *** Rotation NOT done."
+  ob_log " *** ROTATION_NUM_TO_MAINTAIN variable in /etc/openbravo-backup.conf must be a number greater than 0."
+  exit 1
+fi
+
+ALL_FILES="$(cd $DIR_BACKUP && ls)"
+LINE_TO_START_IN_TAIL=$(echo "$ROTATION_NUM_TO_MAINTAIN + 1" | bc)
+FILES_TO_DELETE=$(echo "$ALL_FILES" | sort -r | tail -n +$LINE_TO_START_IN_TAIL)
+
+if [ "$ALL_FILES" = "$FILES_TO_DELETE" ] ; then
+  ob_log " *** Rotation NOT done."
+  ob_log " *** Selected all backups to delete, something is wrong, skkiping delete."
+  exit 1
+fi
+
+if [ "$(echo -e $FILES_TO_DELETE | sed 's/ //g')" != "" ] ; then
+  cd $DIR_BACKUP && rm $FILES_TO_DELETE
+  ob_log " * Rotation has deleted the following backups:"
+  ob_log "$FILES_TO_DELETE"
+fi
+
+exit 0
+

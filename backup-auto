@@ -1,0 +1,23 @@
+#!/bin/bash
+
+set -e
+
+LOG_FILE=/var/log/openbravo/openbravo-backup.log
+[ ! -f $LOG_FILE ] && sudo touch $LOG_FILE && sudo chown openbravo: $LOG_FILE
+
+ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
+export -f ob_log
+
+LCK="/tmp/$(basename $0).LCK";
+exec 9>$LCK;
+if ! flock -n 9 ; then
+  ob_log " *** Tried to launch another backup, but was canceled because there is another backup running" >> $LOG_FILE 2>&1
+  exit 1
+fi
+
+ob_log "" >> $LOG_FILE 2>&1
+ob_log " * Starting Openbravo backup" >> $LOG_FILE 2>&1
+/usr/share/openbravo/backup/backup auto >> $LOG_FILE 2>&1
+
+exit 0
+

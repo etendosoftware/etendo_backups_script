@@ -1,0 +1,157 @@
+#!/bin/bash
+
+set -e
+
+ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
+export -f ob_log
+
+EXPECTED_ARGS=1
+
+if [ $# -ne $EXPECTED_ARGS ]
+then
+  ob_log "Usage: $(basename $0) auto/manual" >&2
+  exit 1
+fi
+
+cleanup_tmp(){
+  rm -rf $tmp_dir
+  exit 1
+}
+
+cleanup_tmp_bkp(){
+  rm -rf $tmp_dir $BACKUP_DIR/backup-$DATE.tar 
+  exit 1
+}
+
+MODE=$1
+
+DIR_BAK_BASE="/backups"
+DIR_BAK_MANUAL="$DIR_BAK_BASE/manual"
+DIR_BAK_AUTO="$DIR_BAK_BASE/auto"
+
+# load config
+ob_log " * Config: /etc/openbravo-backup.conf"
+. /etc/openbravo-backup.conf
+
+if [ $(id -u -n) != "openbravo" ]; then
+        ob_log "You need to run this script as openbravo user"
+        exit 1
+fi
+
+if [ "$BACKUP_ENABLED" != "yes" ] ; then
+  ob_log "*** Backup NOT done. Please enable and configure the backup in /etc/openbravo-backup.conf"
+  exit 1
+fi
+
+if [ "$MODE" = "auto" ] ; then
+  BACKUP_DIR=$DIR_BAK_AUTO
+elif [ "$MODE" = "manual" ] ; then
+  BACKUP_DIR=$DIR_BAK_MANUAL
+else
+  ob_log "Invalid mode '$MODE', valid options = auto , manual."
+  exit 1
+fi
+
+db_login=$(awk -F = '/^bbdd.user/ {print $2}' /opt/OpenbravoERP/config/Openbravo.properties)
+db_pass=$(awk -F = '/^bbdd.password/ {print $2}' /opt/OpenbravoERP/config/Openbravo.properties)
+db_name=$(awk -F = '/^bbdd.sid/ {print $2}' /opt/OpenbravoERP/config/Openbravo.properties)
+db_host=$(awk -F : '/^bbdd.url/ {print $3}' /opt/OpenbravoERP/config/Openbravo.properties | sed -e 's|/||g' -e 's|\\||g')
+db_syspass=$(awk -F = '/^bbdd.systemPassword/ {print $2}' /opt/OpenbravoERP/config/Openbravo.properties)
+context_name=$(awk -F = '/^context.name/ {print $2}' /opt/OpenbravoERP/config/Openbravo.properties)
+
+# Fallback
+[ -z $db_login ] && db_login=tad
+[ -z $db_pass ] && db_pass=tad
+[ -z $db_name ] && db_name=openbravo
+[ -z $db_host ] && db_host=localhost
+[ -z $context_name ] && context_name=openbravo
+
+case "$COMPRESSION_DUMP" in
+  gz)  DUMP_TAR_OPT="z" ;;
+  bz2) DUMP_TAR_OPT="j" ;;
+  xz)  DUMP_TAR_OPT="J" ;;
+  none)  DUMP_TAR_OPT="" ;;
+  *)
+    ob_log "COMPRESSION_DUMP as defined in /etc/openbravo-backup.conf with value = '$COMPRESSION_DUMP' is not one of the accepted values = gz, bz2, xz, none."
+    exit 1
+    ;;
+esac
+
+case "$COMPRESSION_SOURCES" in
+  gz)  SOURCES_TAR_OPT="z" ;;
+  bz2) SOURCES_TAR_OPT="j" ;;
+  xz)  SOURCES_TAR_OPT="J" ;;
+  none)  SOURCES_TAR_OPT="" ;;
+  *)
+    ob_log "COMPRESSION_SOURCES as defined in /etc/openbravo-backup.conf with value = '$COMPRESSION_SOURCES' is not one of the accepted values = gz, bz2, xz, none."
+    exit 1
+    ;;
+esac
+
+if [ "$COMPRESSION_DUMP" = "none" ] ; then
+  DUMP_EXTENSION=""
+else
+  DUMP_EXTENSION=".$COMPRESSION_DUMP"
+fi
+if [ "$COMPRESSION_SOURCES" = "none" ] ; then
+ SOURCES_EXTENSION=""
+else
+ SOURCES_EXTENSION=".$COMPRESSION_SOURCES"
+fi
+
+tmp_dir=$(mktemp -d)
+DATE=$(date -u +"%Y%m%d-%H%M-%Z")
+
+ob_log " * Creating database dump"
+export PGPASSWORD=$db_pass
+pg_dump -h $db_host -U $db_login -Fc -b -f $tmp_dir/db.dump $db_name || cleanup_tmp
+ob_log " * Compressing dump"
+tar -C $tmp_dir -c${DUMP_TAR_OPT}f $tmp_dir/db.dump.tar${DUMP_EXTENSION} db.dump || cleanup_tmp
+rm $tmp_dir/db.dump
+ob_log " * Compressing sources"
+tar -C /opt/OpenbravoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} . || cleanup_tmp
+ob_log " * Compressing webapp"
+tar -C /var/lib/tomcat/webapps/openbravo -c${SOURCES_TAR_OPT}f $tmp_dir/webapp.tar${SOURCES_EXTENSION} . || cleanup_tmp
+
+ob_log " * Calculating sha1 checksums"
+( cd $tmp_dir && sha1sum * > sha1 )
+ob_log " * Creating the backup file"
+[ ! -d $DIR_BAK_BASE ] && sudo mkdir -p $DIR_BAK_BASE && sudo chown openbravo:openbravo $DIR_BAK_BASE
+[ ! -d $BACKUP_DIR ] && sudo mkdir -p $BACKUP_DIR
+if [ "$(stat -c %U:%G $BACKUP_DIR)" != "openbravo:openbravo" ] ; then
+  sudo chown openbravo:openbravo $BACKUP_DIR
+fi
+tar -C $tmp_dir -cf $BACKUP_DIR/backup-$DATE.tar . || cleanup_tmp_bkp
+rm -rf $tmp_dir
+
+if [ "$MODE" = "auto" ] && [ "$ROTATION_ENABLED" = "yes" ] ; then
+  ob_log " * Running rotation"
+  set +e
+  /usr/share/openbravo/backup/backup-rotation $DIR_BAK_AUTO
+  set -e
+fi
+
+if [ "$SYNC_ENABLED" = "yes" ] ; then
+
+  [ "$SYNC_PLUGINS_TO_RUN" = "" ] && ob_log " *** sync is enabled but no plugin was specified"
+
+  for SYNC_OPT in $SYNC_PLUGINS_TO_RUN ; do
+    ob_log " * Running sync plugin: '$SYNC_OPT'"
+    if [ "$(echo $SYNC_OPT | grep '/')" = "" ] ; then
+      SYNC_OPT_FILE=/usr/share/openbravo/backup/sync-methods/$SYNC_OPT
+    else
+      SYNC_OPT_FILE=$SYNC_OPT
+    fi
+    [ ! -x $SYNC_OPT_FILE ] && ob_log "The sync plugin '$SYNC_OPT' specified in /etc/openbravo-backup.conf was not found or does not have execution permission" && continue
+    $SYNC_OPT_FILE || ob_log "The plugin '$SYNC_OPT' has failed to run"
+  done
+fi
+
+if [ "$(date +%Z)" != "UTC" ] ; then
+  ob_log " ** NOTE: The system has $(date +%Z) timezone, but the backup file name will be always in UTC."
+fi
+
+ob_log " * Backup done: $BACKUP_DIR/backup-$DATE.tar"
+
+exit 0
+
