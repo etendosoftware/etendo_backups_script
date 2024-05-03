@@ -153,7 +153,7 @@ chown -R etendo: /var/lib/tomcat/webapps/etendo
 if [ "$ATTACH_PATH" != "/opt/EtendoERP/attachments" ] ; then
   chown -R etendo: $ATTACH_PATH
 fi
-find /opt/EtendoERP -type f -exec chmod 644 '{}' \+
+find /opt/EtendoERP -type f ! -name gradlew -exec chmod 644 '{}' \+
 find /opt/EtendoERP -type d -exec chmod 755 '{}' \+
 find /var/lib/tomcat/webapps/etendo -type f -exec chmod 644 '{}' \+
 find /var/lib/tomcat/webapps/etendo -type d -exec chmod 755 '{}' \+
