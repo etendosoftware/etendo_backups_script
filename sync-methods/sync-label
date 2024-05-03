@@ -4,6 +4,8 @@ set -e
 
 . /etc/openbravo-backup.conf
 
+#TODO: ADD USE OF BACKUPS_DIR AND BACKUPS_TMP_DIR ENVIRONMENT VARS.
+
 ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
 export -f ob_log
 
@@ -14,7 +16,7 @@ DEVICE=$(sudo blkid -L $SYNC_LABEL) || ( ob_log "Label '$SYNC_LABEL' not found. 
 TEMP_DIR=$(mktemp -d)
 
 sudo mount -L $SYNC_LABEL $TEMP_DIR
-[ ! -d $TEMP_DIR/$SYNC_LABEL_PATH ] && sudo mkdir -p $TEMP_DIR/$SYNC_LABEL_PATH && sudo chown openbravo: $TEMP_DIR/$SYNC_LABEL_PATH
+[ ! -d $TEMP_DIR/$SYNC_LABEL_PATH ] && sudo mkdir -p $TEMP_DIR/$SYNC_LABEL_PATH && sudo chown etendo: $TEMP_DIR/$SYNC_LABEL_PATH
 set +e
 rsync -aAHXv --delete /backups/ $TEMP_DIR/$SYNC_LABEL_PATH/
 ERRCODE=$?
@@ -23,4 +25,3 @@ sudo umount $TEMP_DIR
 rmdir $TEMP_DIR
 
 exit $ERRCODE
-

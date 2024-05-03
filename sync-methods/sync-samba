@@ -1,0 +1,34 @@
+#!/bin/bash
+
+set -e
+
+. /etc/openbravo-backup.conf
+
+ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
+export -f ob_log
+
+if [ -z "$BACKUPS_TMP_DIR" ] ; then
+  TEMP_DIR=$(mktemp -d)
+else
+  NEW_UUID=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 10 | head -n 1)
+  TEMP_DIR=$BACKUPS_TMP_DIR/tmp.$NEW_UUID
+  mkdir -p $TEMP_DIR && sudo chown etendo:etendo $TEMP_DIR
+fi
+ob_log " * Using tmp folder '$TEMP_DIR'"
+
+if [ -z "$BACKUPS_DIR" ] ; then
+  DIR_BAK_BASE="/backups"
+else
+  DIR_BAK_BASE="$BACKUPS_DIR"
+fi
+
+sudo mount -tcifs -orw,username=$SAMBA_USER,password=$SAMBA_PASS,uid=$SAMBA_UUI //$SAMBA_HOST/$SAMBA_SHARED_FOLDER $TEMP_DIR
+sudo mkdir -p $TEMP_DIR/$SYNC_LABEL_PATH
+set +e
+rsync -aAHXv --delete $BACKUPS_DIR $TEMP_DIR/$SAMBA_SYNC_PATH/
+ERRCODE=$?
+set -e
+sudo umount $TEMP_DIR
+rmdir $TEMP_DIR
+
+exit $ERRCODE

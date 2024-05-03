@@ -2,8 +2,8 @@
 
 set -e
 
-LOG_FILE=/var/log/openbravo/openbravo-backup.log
-[ ! -f $LOG_FILE ] && sudo touch $LOG_FILE && sudo chown openbravo: $LOG_FILE
+LOG_FILE=/var/log/etendo/etendo-backup.log
+[ ! -f $LOG_FILE ] && sudo touch $LOG_FILE && sudo chown etendo: $LOG_FILE
 
 ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; }
 export -f ob_log
@@ -16,8 +16,8 @@ if ! flock -n 9 ; then
 fi
 
 ob_log "" >> $LOG_FILE 2>&1
-ob_log " * Starting Openbravo backup" >> $LOG_FILE 2>&1
-/usr/share/openbravo/backup/backup auto >> $LOG_FILE 2>&1
+ob_log " * Starting Etendo backup" >> $LOG_FILE 2>&1
+/usr/share/etendo/backup/backup auto >> $LOG_FILE 2>&1
 
 exit 0
 

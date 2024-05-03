@@ -1,0 +1,170 @@
+#!/bin/bash
+
+set -e
+
+EXPECTED_ARGS=1
+
+if [ $# -ne $EXPECTED_ARGS ]
+then
+  echo "Usage: $(basename $0) PATH_OF_BACKUP" >&2
+  echo "Example: $(basename $0) backup-xxxxxxxx-xxxx-UTC.tar" >&2
+  exit 1
+fi
+
+BAK_PATH=$1
+
+if [ ! -f $BAK_PATH ] ; then
+  echo "File $BAK_PATH does not exist."
+  exit 1
+fi
+
+DIR_BAK_BASE="/backups"
+DIR_BAK_MANUAL="$DIR_BAK_BASE/manual"
+DIR_BAK_AUTO="$DIR_BAK_BASE/auto"
+
+if [ $(id -u -n) = "etendo" ]; then
+	sudo /usr/bin/etendo-restore $*
+	exit $?
+fi
+
+if [ $(id -u -n) != "root" ]; then
+        echo "You need to run this script using sudo (or as root)"
+        exit 1
+fi
+
+echo ""
+#------------Modified by Ansible1stLine-----------------
+#We load the environment variables
+. /etc/openbravo-backup.conf
+
+if [ -z $ENV_TYPE_TOP ]
+then
+    echo "This script couldn't find the environment configuration. Please set the ENV_TYPE_TOP to PROD or TEST."
+    exit 1
+elif [ $ENV_TYPE_TOP == 'PROD' ]
+then
+    echo "This is a production environment. Scheduled proccesses won't be disabled. If you want disable them, run disable-test.sh in /usr/share/openbravo/backup"
+elif [ $ENV_TYPE_TOP == 'TEST' ]
+then
+    echo "This is a testing environment. Scheduled processes will be disabled for safety reasons."
+else
+    echo "This script couldn't find the environment configuration or it's corrupted. Please set the ENV_TYPE_TOP to PROD or TEST in /etc/openbravo-backup.conf"
+    exit 1
+fi
+#------------Modified by Ansible1stLine-----------------
+echo " WARNING !! The restore will DELETE (without undo option):"
+echo " * Etendo database"
+echo " * Etendo sources and attachments (/opt/EtendoERP)"
+echo " * Etendo deploy (/var/lib/tomcat/webapps/etendo)"
+echo ""
+echo " After deleting these elements, they will be recreated with the information contained in:"
+echo " * $BAK_PATH"
+echo ""
+echo -n " Continue? (y/N) "
+read yn
+echo ""
+case $yn in
+    y* | Y* ) ;;
+    * )   echo "Restore canceled. No changes were done." ; exit 1 ;;
+esac
+
+DATE=$(date +"%Y%m%d-%H%M-%Z")
+
+TEMP_FOLDER=$(mktemp -d)
+
+echo " * Decompressing backup to a temporary folder"
+tar xf $BAK_PATH -C $TEMP_FOLDER
+
+echo " * Checking sha1 checksums of the files inside the backup"
+( cd $TEMP_FOLDER && sha1sum -c sha1 )
+
+if [ -f $TEMP_FOLDER/backup.tgz ] ; then
+  echo " * Detected rPath backup.tgz: decompressing..."
+  tar xf $TEMP_FOLDER/backup.tgz -C $TEMP_FOLDER
+  [ -f $TEMP_FOLDER/opt/EtendoERP/db_backup.dmp ] && mv $TEMP_FOLDER/opt/EtendoERP/db_backup.dmp $TEMP_FOLDER/
+fi
+
+set +e
+/etc/init.d/tomcat stop
+[ $? -ne 0 ] && echo "Tomcat has failed to stop. Please stop it manually and retry." && exit 1
+set -e
+
+echo " * Deleting database"
+# Uncomment next line to kill all the connections to the database
+# sudo su - postgres -c "psql -U postgres -c \"select pg_terminate_backend(procpid) from pg_stat_activity where datname = 'etendo'\"'
+su - postgres -c "psql -U postgres -c \"drop database etendo\"" || true
+
+
+echo " * Restoring database"
+su - postgres -c "psql -U postgres -c \"ALTER ROLE tad WITH SUPERUSER;\""
+su - postgres -c "psql -U postgres -c \"create database etendo WITH ENCODING='UTF8' OWNER=TAD;\""
+if [ -f $TEMP_FOLDER/db_backup.dmp ] ; then
+  su - postgres -c "psql -U postgres -d etendo -c \"drop extension plpgsql;\""
+  PGPASSWORD=tad pg_restore -U tad -h localhost -d etendo -O $TEMP_FOLDER/db_backup.dmp || true
+else
+  tar xf $TEMP_FOLDER/db.dump.tar* -C $TEMP_FOLDER/
+  PGPASSWORD=tad pg_restore -U tad -h localhost -d etendo -O $TEMP_FOLDER/db.dump || true
+fi
+su - postgres -c "psql -U postgres -c \"ALTER ROLE tad WITH NOSUPERUSER;\""
+echo " * Deleting webapp"
+rm -rf /var/lib/tomcat/webapps/etendo || true
+rm -rf /var/lib/tomcat/work/* || true
+
+echo " * Deleting sources"
+rm -rf /opt/EtendoERP || true
+
+echo " * Restoring sources"
+if [ -d $TEMP_FOLDER/opt ] ; then
+  mv $TEMP_FOLDER/opt/EtendoERP /opt/
+else
+  mkdir -p /opt/EtendoERP/
+  tar xf $TEMP_FOLDER/sources.tar* -C /opt/EtendoERP/
+fi
+
+echo " * Restoring webapp"
+if [ -d $TEMP_FOLDER/var ] ; then
+  mv $TEMP_FOLDER/var/lib/tomcat/webapps/etendo /var/lib/tomcat/webapps/
+else
+  mkdir /var/lib/tomcat/webapps/etendo
+  tar xf $TEMP_FOLDER/webapp.tar* -C /var/lib/tomcat/webapps/etendo/
+fi
+
+ATTACH_PATH=$(awk -F = '/^attach.path/ {print $2}' /opt/EtendoERP/config/Openbravo.properties)
+if [ "$ATTACH_PATH" != "/opt/EtendoERP/attachments" ] ; then
+  echo " * Deleting attachments"
+  rm -rf $ATTACH_PATH || true
+  echo " * Restoring attachments"
+  mkdir -p $ATTACH_PATH
+  tar xf $TEMP_FOLDER/attach.tar* -C $ATTACH_PATH
+fi
+
+echo " * Removing temporary folder"
+rm -r $TEMP_FOLDER
+#------------Modified by Ansible2ndLine-----------------
+if [ $ENV_TYPE_TOP == "TEST" ]; then
+    echo " * Running disable-test.sh to disable scheduled processes in OB."
+    /usr/share/etendo/backup/disable-test.sh
+fi
+#------------Modified by Ansible2ndLine-----------------
+
+echo " * Fixing permissions"
+chown -R etendo: /opt/EtendoERP
+chown -R etendo: /var/lib/tomcat/webapps/etendo
+if [ "$ATTACH_PATH" != "/opt/EtendoERP/attachments" ] ; then
+  chown -R etendo: $ATTACH_PATH
+fi
+find /opt/EtendoERP -type f -exec chmod 644 '{}' \+
+find /opt/EtendoERP -type d -exec chmod 755 '{}' \+
+find /var/lib/tomcat/webapps/etendo -type f -exec chmod 644 '{}' \+
+find /var/lib/tomcat/webapps/etendo -type d -exec chmod 755 '{}' \+
+if [ "$ATTACH_PATH" != "/opt/EtendoERP/attachments" ] ; then
+  find $ATTACH_PATH -type f -exec chmod 644 '{}' \+
+  find $ATTACH_PATH -type d -exec chmod 755 '{}' \+
+fi
+
+echo " * Restore done."
+echo ""
+echo " * This script will not start Tomcat. You can start it with:"
+echo "   sudo /etc/init.d/tomcat start"
+exit 0
+
