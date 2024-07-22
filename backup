@@ -38,7 +38,7 @@ cleanup_tmp(){
       echo "ERROR: $1. Check space on device." >> $email;
   fi
   rm -rf $tmp_dir
-  if [ "$MODE" = "auto" ] ; then
+  if [ "$MODE" = "auto" || "$MODE" = "annual" ] ; then
     python /usr/share/etendo/backup/mail/sendMail.py
   fi  
   exit 1
@@ -50,7 +50,7 @@ cleanup_tmp_bkp(){
       echo "ERROR: $1. Check space on device." >> $email;
   fi
   rm -rf $tmp_dir $BACKUP_DIR/backup-$DATE.tar
-  if [ "$MODE" = "auto" ] ; then
+  if [ "$MODE" = "auto" ] || [ "$MODE" = "annual" ] ; then
     python /usr/share/etendo/backup/mail/sendMail.py
   fi  
   exit 1
@@ -65,10 +65,11 @@ ob_log " * Using backup folder '$DIR_BAK_BASE'"
 
 DIR_BAK_MANUAL="$DIR_BAK_BASE/manual"
 DIR_BAK_AUTO="$DIR_BAK_BASE/auto"
+DIR_BAK_ANNUAL="$DIR_BAK_BASE/annual"
 
 if [ $(id -u -n) != "etendo" ]; then
   ob_log "You need to run this script as etendo user"
-  if [ "$MODE" = "auto" ] ; then
+  if [ "$MODE" = "auto" ] || [ "$MODE" = "annual" ] ; then
     python /usr/share/etendo/backup/mail/sendMail.py;
   fi
   exit 1
@@ -76,7 +77,7 @@ fi
 
 if [ "$BACKUP_ENABLED" != "yes" ] ; then
   ob_log "*** Backup NOT done. Please enable and configure the backup in /etc/openbravo-backup.conf"
-  if [ "$MODE" = "auto" ] ; then
+  if [ "$MODE" = "auto" ] || [ "$MODE" = "annual" ] ; then
     python /usr/share/etendo/backup/mail/sendMail.py;
   fi
   exit 1
@@ -86,9 +87,11 @@ if [ "$MODE" = "auto" ] ; then
   BACKUP_DIR=$DIR_BAK_AUTO
 elif [ "$MODE" = "manual" ] ; then
   BACKUP_DIR=$DIR_BAK_MANUAL
+elif [ "$MODE" = "annual" ] ; then
+  BACKUP_DIR=$DIR_BAK_ANNUAL
 else
-  ob_log "Invalid mode '$MODE', valid options = auto , manual."
-  if [ "$MODE" = "auto" ] ; then
+  ob_log "Invalid mode '$MODE', valid options = auto , manual , annual."
+  if [ "$MODE" = "auto" || "$MODE" = "annual" ] ; then
     python /usr/share/etendo/backup/mail/sendMail.py;
   fi
   exit 1
@@ -119,7 +122,7 @@ case "$COMPRESSION_DUMP" in
   none)  DUMP_TAR_OPT="" ;;
   *)
     ob_log "COMPRESSION_DUMP as defined in /etc/openbravo-backup.conf with value = '$COMPRESSION_DUMP' is not one of the accepted values = gz, bz2, xz, none."
-    if [ "$MODE" = "auto" ] ; then
+    if [ "$MODE" = "auto" ] || [ "$MODE" = "annual" ] ; then
       python /usr/share/etendo/backup/mail/sendMail.py;
     fi
     exit 1
@@ -133,7 +136,7 @@ case "$COMPRESSION_SOURCES" in
   none)  SOURCES_TAR_OPT="" ;;
   *)
     ob_log "COMPRESSION_SOURCES as defined in /etc/openbravo-backup.conf with value = '$COMPRESSION_SOURCES' is not one of the accepted values = gz, bz2, xz, none."
-    if [ "$MODE" = "auto" ] ; then
+    if [ "$MODE" = "auto" ] || [ "$MODE" = "annual" ] ; then
       python /usr/share/etendo/backup/mail/sendMail.py;
     fi
     exit 1
@@ -201,17 +204,35 @@ ob_log " * Creating the backup file"
 if [ "$(stat -c %U:%G $BACKUP_DIR)" != "etendo:etendo" ] ; then
   sudo chown etendo:etendo $BACKUP_DIR
 fi
-tar -C $tmp_dir -cf $BACKUP_DIR/backup-$DATE.tar . || cleanup_tmp_bkp "Creating the backup file"
+
+if [ "$MODE" = "annual" ] ; then
+  if [ -z "$BACKUP_PASSWORD" ] ; then 
+    ob_log "** Annual backup NOT DONE. The backup password must be set for backup encryption. **"
+    python /usr/share/etendo/backup/mail/sendMail.py;
+    exit 1
+  fi
+  tar -C $tmp_dir -cf $BACKUP_DIR/backup-$DATE.tar . |\
+  openssl enc -des3 -a -salt -in $BACKUP_DIR/backup-$DATE.tar -k $BACKUP_PASSWORD -pbkdf2 -out $BACKUP_DIR/backup-$DATE.tar.asc \
+  || cleanup_tmp_bkp "Creating the backup file"
+  rm -rf $BACKUP_DIR/backup-$DATE.tar
+else 
+  tar -C $tmp_dir -cf $BACKUP_DIR/backup-$DATE.tar . || cleanup_tmp_bkp "Creating the backup file"
+fi
+
 rm -rf $tmp_dir
 
-if [ "$MODE" = "auto" ] && [ "$ROTATION_ENABLED" = "yes" ] ; then
+if [ "$MODE" = "auto" ] && [ "$ROTATION_ENABLED" = "yes" ] || [ "$MODE" = "annual" ] ; then
   ob_log " * Running rotation"
   set +e
-  /usr/share/etendo/backup/backup-rotation $DIR_BAK_AUTO
+  if [ "$MODE" = "auto" ] ; then
+    /usr/share/etendo/backup/backup-rotation $DIR_BAK_AUTO
+  else
+    /usr/share/etendo/backup/backup-rotation $DIR_BAK_ANNUAL
+  fi
   set -e
 fi
 
-if [ "$SYNC_ENABLED" = "yes" ] ; then
+if [ "$SYNC_ENABLED" = "yes" ] || [ "$MODE" = "annual" ] ; then
 
   [ "$SYNC_PLUGINS_TO_RUN" = "" ] && ob_log " *** sync is enabled but no plugin was specified"
 

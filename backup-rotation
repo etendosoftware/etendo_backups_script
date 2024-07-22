@@ -17,6 +17,19 @@ DIR_BACKUP=$1
 # load config
 . /etc/openbravo-backup.conf
 
+# Set a fixed 5 backups to maintain in rotation if running the annual backup
+if [ -z "$BACKUPS_DIR" ] ; then
+  DIR_BAK_BASE="/backups"
+else
+  DIR_BAK_BASE="$BACKUPS_DIR"
+fi
+
+DIR_BAK_ANNUAL="$DIR_BAK_BASE/annual"
+
+if [ "$DIR_BACKUP" = "$DIR_BAK_ANNUAL" ] ; then 
+  ROTATION_NUM_TO_MAINTAIN="5"
+fi
+
 if [ "$ROTATION_NUM_TO_MAINTAIN" = "" ] || [ "$(echo "$ROTATION_NUM_TO_MAINTAIN" | grep -o [^0-9])" != "" ] || [ "$ROTATION_NUM_TO_MAINTAIN" = "0" ]; then
   ob_log " *** Rotation NOT done."
   ob_log " *** ROTATION_NUM_TO_MAINTAIN variable in /etc/openbravo-backup.conf must be a number greater than 0."
