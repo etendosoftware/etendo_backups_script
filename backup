@@ -4,29 +4,29 @@
 
 set -e
 
-. /etc/openbravo-backup.conf
+. /etc/etendo-backup.conf
 
 if [ -z "$EMAIL_TEMP_FILE" ] ; then
   email="/tmp/mailText.txt"
 else
   email="$EMAIL_TEMP_FILE"
 fi
-echo "Backup de Etendo no realizado." > $email;
+echo "The backup was not performed." > $email;
 
-ob_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; echo "$(date --rfc-3339=seconds) $*" >> $email; }
-export -f ob_log
+etendo_log (){  echo -e "$(date --rfc-3339=seconds) $*" ; echo "$(date --rfc-3339=seconds) $*" >> $email; }
+export -f etendo_log
 
-ob_log " * Private IP: " $(hostname -I)
-ob_log " * Public  IP: " $(wget -qO- ifconfig.me)
+etendo_log " * Private IP: " $(hostname -I)
+etendo_log " * Public  IP: " $(wget -qO- ifconfig.me)
 
 # load config
-ob_log " * Config: /etc/openbravo-backup.conf"
+etendo_log " * Config: /etc/etendo-backup.conf"
 
 EXPECTED_ARGS=1
 
 if [ $# -ne $EXPECTED_ARGS ]
 then
-  ob_log "Usage: $(basename $0) auto/manual" >&2
+  etendo_log "Usage: $(basename $0) auto/manual" >&2
   exit 1
 fi
 
@@ -35,13 +35,14 @@ MODE=$1
 cleanup_tmp(){
   if [ "$1" ]
   then
-      echo "ERROR: $1. Check space on device." >> $email;
+    echo "ERROR: $1. Check space on device." >> $email;
   fi
   rm -rf $tmp_dir
   if [ "$MODE" = "auto" ] ; then
-    python /usr/share/etendo/backup/mail/sendMail.py
+    if [ "$EMAIL_ENABLED" = "yes" ] ; then
+      python2 /usr/share/etendo/backup/mail/sendMail.py
+    fi
   fi  
-  exit 1
 }
 
 cleanup_tmp_bkp(){
@@ -51,7 +52,9 @@ cleanup_tmp_bkp(){
   fi
   rm -rf $tmp_dir $BACKUP_DIR/backup-$DATE.tar
   if [ "$MODE" = "auto" ] ; then
-    python /usr/share/etendo/backup/mail/sendMail.py
+    if [ "$EMAIL_ENABLED" = "yes" ] ; then
+      python2 /usr/share/etendo/backup/mail/sendMail.py
+    fi
   fi  
   exit 1
 }
@@ -61,23 +64,27 @@ if [ -z "$BACKUPS_DIR" ] ; then
 else
   DIR_BAK_BASE="$BACKUPS_DIR"
 fi
-ob_log " * Using backup folder '$DIR_BAK_BASE'"
+etendo_log " * Using backup folder '$DIR_BAK_BASE'"
 
 DIR_BAK_MANUAL="$DIR_BAK_BASE/manual"
 DIR_BAK_AUTO="$DIR_BAK_BASE/auto"
 
 if [ $(id -u -n) != "etendo" ]; then
-  ob_log "You need to run this script as etendo user"
+  etendo_log "You need to run this script as etendo user"
   if [ "$MODE" = "auto" ] ; then
-    python /usr/share/etendo/backup/mail/sendMail.py;
+    if [ "$EMAIL_ENABLED" = "yes" ] ; then
+      python2 /usr/share/etendo/backup/mail/sendMail.py
+    fi
   fi
   exit 1
 fi
 
 if [ "$BACKUP_ENABLED" != "yes" ] ; then
-  ob_log "*** Backup NOT done. Please enable and configure the backup in /etc/openbravo-backup.conf"
+  etendo_log "*** Backup NOT done. Please enable and configure the backup in /etc/etendo-backup.conf"
   if [ "$MODE" = "auto" ] ; then
-    python /usr/share/etendo/backup/mail/sendMail.py;
+    if [ "$EMAIL_ENABLED" = "yes" ] ; then
+      python2 /usr/share/etendo/backup/mail/sendMail.py
+    fi
   fi
   exit 1
 fi
@@ -87,9 +94,11 @@ if [ "$MODE" = "auto" ] ; then
 elif [ "$MODE" = "manual" ] ; then
   BACKUP_DIR=$DIR_BAK_MANUAL
 else
-  ob_log "Invalid mode '$MODE', valid options = auto , manual."
+  etendo_log "Invalid mode '$MODE', valid options = auto , manual."
   if [ "$MODE" = "auto" ] ; then
-    python /usr/share/etendo/backup/mail/sendMail.py;
+    if [ "$EMAIL_ENABLED" = "yes" ] ; then
+      python2 /usr/share/etendo/backup/mail/sendMail.py
+    fi
   fi
   exit 1
 fi
@@ -118,9 +127,11 @@ case "$COMPRESSION_DUMP" in
   xz)  DUMP_TAR_OPT="J" ;;
   none)  DUMP_TAR_OPT="" ;;
   *)
-    ob_log "COMPRESSION_DUMP as defined in /etc/openbravo-backup.conf with value = '$COMPRESSION_DUMP' is not one of the accepted values = gz, bz2, xz, none."
+    etendo_log "COMPRESSION_DUMP as defined in /etc/etendo-backup.conf with value = '$COMPRESSION_DUMP' is not one of the accepted values = gz, bz2, xz, none."
     if [ "$MODE" = "auto" ] ; then
-      python /usr/share/etendo/backup/mail/sendMail.py;
+      if [ "$EMAIL_ENABLED" = "yes" ] ; then
+        python2 /usr/share/etendo/backup/mail/sendMail.py
+      fi
     fi
     exit 1
     ;;
@@ -132,9 +143,11 @@ case "$COMPRESSION_SOURCES" in
   xz)  SOURCES_TAR_OPT="J" ;;
   none)  SOURCES_TAR_OPT="" ;;
   *)
-    ob_log "COMPRESSION_SOURCES as defined in /etc/openbravo-backup.conf with value = '$COMPRESSION_SOURCES' is not one of the accepted values = gz, bz2, xz, none."
+    etendo_log "COMPRESSION_SOURCES as defined in /etc/etendo-backup.conf with value = '$COMPRESSION_SOURCES' is not one of the accepted values = gz, bz2, xz, none."
     if [ "$MODE" = "auto" ] ; then
-      python /usr/share/etendo/backup/mail/sendMail.py;
+      if [ "$EMAIL_ENABLED" = "yes" ] ; then
+        python2 /usr/share/etendo/backup/mail/sendMail.py
+      fi
     fi
     exit 1
     ;;
@@ -158,44 +171,40 @@ else
   tmp_dir=$BACKUPS_TMP_DIR/tmp.$NEW_UUID
   mkdir -p $tmp_dir && sudo chown etendo:etendo $tmp_dir
 fi
-ob_log " * Using tmp folder '$tmp_dir'"
+etendo_log " * Using tmp folder '$tmp_dir'"
 
 DATE=$(date -u +"%Y%m%d-%H%M-%Z")
 
 export PGPASSWORD=$db_pass
-if [ "$EXEC_FIX_SCRIPT" = "yes" ] ; then
-  ob_log " * DB FIX SCRIPT is running"
-  psql -h $db_host -p $db_port -U $db_login -d $db_name -a -f $SCRIPT_FILE >& $OUTPUT_FILE
-fi
-ob_log " * Creating database dump"
+etendo_log " * Creating database dump"
 pg_dump -p $db_port -h $db_host -U $db_login -Fc -b -f $tmp_dir/db.dump $db_name || cleanup_tmp "Creating database dump"
-ob_log " * Compressing dump"
+etendo_log " * Compressing dump"
 tar -C $tmp_dir -c${DUMP_TAR_OPT}f $tmp_dir/db.dump.tar${DUMP_EXTENSION} db.dump || cleanup_tmp "Compressing dump"
 rm $tmp_dir/db.dump
 
 if [ -z "$ATTACH_IN_BKP" ] ; then
-  ob_log " * Compressing sources with attachments"
-  tar -C /opt/EtendoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} . || cleanup_tmp "Compressing sources"
+  etendo_log " * Compressing sources with attachments (excluding volumes)"
+  tar -C /opt/EtendoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} --exclude='volumes' . || cleanup_tmp "Compressing sources"
 else
   if [ "$ATTACH_IN_BKP" = "yes" ] ; then
-    ob_log " * Compressing sources with attachments"
-    tar -C /opt/EtendoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} . || cleanup_tmp "Compressing sources"
+    etendo_log " * Compressing sources with attachments (excluding volumes)"
+    tar -C /opt/EtendoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} --exclude='volumes' . || cleanup_tmp "Compressing sources"
   else
-    ob_log " * Compressing sources without attachments"
-    tar -C /opt/EtendoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} --exclude='attachments' . || cleanup_tmp "Compressing sources without attachments"
+    etendo_log " * Compressing sources without attachments (excluding volumes)"
+    tar -C /opt/EtendoERP -c${SOURCES_TAR_OPT}f $tmp_dir/sources.tar${SOURCES_EXTENSION} --exclude='attachments' --exclude='volumes' . || cleanup_tmp "Compressing sources without attachments"
   fi
 fi
 
-ob_log " * Compressing webapp"
+etendo_log " * Compressing webapp"
 tar -C /var/lib/tomcat/webapps/etendo -c${SOURCES_TAR_OPT}f $tmp_dir/webapp.tar${SOURCES_EXTENSION} . || cleanup_tmp "Compressing webapp"
 if [ "$ATTACH_COPY" = "yes" ] && [ "$attach_path" != "/opt/EtendoERP/attachments" ] ; then
-  ob_log " * Compressing attachments"
+  etendo_log " * Compressing attachments"
   tar -C $attach_path -c${SOURCES_TAR_OPT}f $tmp_dir/attach.tar${SOURCES_EXTENSION} . || cleanup_tmp "Compressing attachments"
 fi
 
-ob_log " * Calculating sha1 checksums"
+etendo_log " * Calculating sha1 checksums"
 ( cd $tmp_dir && sha1sum * > sha1 )
-ob_log " * Creating the backup file"
+etendo_log " * Creating the backup file"
 [ ! -d $DIR_BAK_BASE ] && sudo mkdir -p $DIR_BAK_BASE && sudo chown etendo:etendo $DIR_BAK_BASE
 [ ! -d $BACKUP_DIR ] && sudo mkdir -p $BACKUP_DIR
 if [ "$(stat -c %U:%G $BACKUP_DIR)" != "etendo:etendo" ] ; then
@@ -205,7 +214,7 @@ tar -C $tmp_dir -cf $BACKUP_DIR/backup-$DATE.tar . || cleanup_tmp_bkp "Creating 
 rm -rf $tmp_dir
 
 if [ "$MODE" = "auto" ] && [ "$ROTATION_ENABLED" = "yes" ] ; then
-  ob_log " * Running rotation"
+  etendo_log " * Running rotation"
   set +e
   /usr/share/etendo/backup/backup-rotation $DIR_BAK_AUTO
   set -e
@@ -213,35 +222,35 @@ fi
 
 if [ "$SYNC_ENABLED" = "yes" ] ; then
 
-  [ "$SYNC_PLUGINS_TO_RUN" = "" ] && ob_log " *** sync is enabled but no plugin was specified"
+  [ "$SYNC_PLUGINS_TO_RUN" = "" ] && etendo_log " *** sync is enabled but no plugin was specified"
 
   for SYNC_OPT in $SYNC_PLUGINS_TO_RUN ; do
-    ob_log " * Running sync plugin: '$SYNC_OPT'"
+    etendo_log " * Running sync plugin: '$SYNC_OPT'"
     if [ "$(echo $SYNC_OPT | grep '/')" = "" ] ; then
       SYNC_OPT_FILE=/usr/share/etendo/backup/sync-methods/$SYNC_OPT
     else
       SYNC_OPT_FILE=$SYNC_OPT
     fi
-    [ ! -x $SYNC_OPT_FILE ] && ob_log "The sync plugin '$SYNC_OPT' specified in /etc/openbravo-backup.conf was not found or does not have execution permission" && continue
+    [ ! -x $SYNC_OPT_FILE ] && etendo_log "The sync plugin '$SYNC_OPT' specified in /etc/etendo-backup.conf was not found or does not have execution permission" && continue
     
-    $SYNC_OPT_FILE || ob_log "The plugin '$SYNC_OPT' has failed to run"
+    $SYNC_OPT_FILE || etendo_log "The plugin '$SYNC_OPT' has failed to run"
   done
 fi
 
 if [ "$SCP_COPY" = "yes" ] ; then
-  ob_log " * SCP is copying"
+  etendo_log " * SCP is copying"
   scp $BACKUP_DIR/backup-$DATE.tar $SCP_USER@$SCP_SERVER:$SCP_SERVER_PATH
 fi
 
 if [ "$RSYNC" = "yes" ] ; then
-  ob_log " * RSYNC is copying"
+  etendo_log " * RSYNC is copying"
   rsync -v --del -a $BACKUP_DIR $RSYNC_USER@$RSYNC_SERVER:$RSYNC_SERVER_PATH
 fi
 
 if [ "$(date +%Z)" != "UTC" ] ; then
-  ob_log " ** NOTE: The system has $(date +%Z) timezone, but the backup file name will be always in UTC."
+  etendo_log " ** NOTE: The system has $(date +%Z) timezone, but the backup file name will be always in UTC."
 fi
 
-ob_log " * Backup done: $BACKUP_DIR/backup-$DATE.tar"
+etendo_log " * Backup done: $BACKUP_DIR/backup-$DATE.tar"
 
 exit 0
