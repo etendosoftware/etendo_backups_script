@@ -131,11 +131,16 @@ fi
 
 ATTACH_PATH=$(awk -F = '/^attach.path/ {print $2}' /opt/EtendoERP/config/Openbravo.properties)
 if [ "$ATTACH_PATH" != "/opt/EtendoERP/attachments" ] ; then
-  echo " * Deleting attachments"
-  rm -rf $ATTACH_PATH || true
-  echo " * Restoring attachments"
-  mkdir -p $ATTACH_PATH
-  tar xf $TEMP_FOLDER/attach.tar* -C $ATTACH_PATH
+  ATTACH_ARCHIVE=$(compgen -G "$TEMP_FOLDER/attach.tar*" || true)
+  if [ -n "$ATTACH_ARCHIVE" ] ; then
+    echo " * Deleting attachments"
+    rm -rf "$ATTACH_PATH" || true
+    echo " * Restoring attachments"
+    mkdir -p "$ATTACH_PATH"
+    tar xf "$ATTACH_ARCHIVE" -C "$ATTACH_PATH"
+  else
+    echo " * No external attachments found in the backup. Preserving existing attachments."
+  fi
 fi
 
 echo " * Removing temporary folder"
