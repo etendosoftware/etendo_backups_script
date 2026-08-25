@@ -110,6 +110,33 @@ echo " * Deleting webapp"
 rm -rf /var/lib/tomcat/webapps/etendo || true
 rm -rf /var/lib/tomcat/work/* || true
 
+CURRENT_ATTACH_PATH=$(awk -F = '/^attach.path/ {print $2}' /opt/EtendoERP/config/Openbravo.properties 2>/dev/null || true)
+if [ -z "$CURRENT_ATTACH_PATH" ] ; then
+  CURRENT_ATTACH_PATH="/opt/EtendoERP/attachments"
+fi
+
+PRESERVED_ATTACH_DIR="/opt/.etendo-restore-preserved-attachments"
+PRESERVE_MODE=""
+PRESERVED_ATTACH_TARGET=""
+if [ "$CURRENT_ATTACH_PATH" = "/opt/EtendoERP/attachments" ] && [ -e /opt/EtendoERP/attachments ] ; then
+  if [ -L /opt/EtendoERP/attachments ] ; then
+    echo " * Existing internal attachments is a symlink; remembering its target"
+    PRESERVED_ATTACH_TARGET=$(readlink /opt/EtendoERP/attachments)
+    rm /opt/EtendoERP/attachments
+    PRESERVE_MODE="symlink"
+  elif mountpoint -q /opt/EtendoERP/attachments ; then
+    echo " * Existing internal attachments is a separate mount; unmounting until the backup content is known"
+    PRESERVED_ATTACH_TARGET=$(findmnt -n -o SOURCE --target /opt/EtendoERP/attachments)
+    umount /opt/EtendoERP/attachments
+    PRESERVE_MODE="mount"
+  else
+    echo " * Moving existing internal attachments aside until the backup content is known"
+    rm -rf "$PRESERVED_ATTACH_DIR"
+    mv /opt/EtendoERP/attachments "$PRESERVED_ATTACH_DIR"
+    PRESERVE_MODE="dir"
+  fi
+fi
+
 echo " * Deleting sources"
 rm -rf /opt/EtendoERP || true
 
@@ -119,6 +146,20 @@ if [ -d $TEMP_FOLDER/opt ] ; then
 else
   mkdir -p /opt/EtendoERP/
   tar xf $TEMP_FOLDER/sources.tar* -C /opt/EtendoERP/
+fi
+
+if [ -n "$PRESERVE_MODE" ] ; then
+  if [ -e /opt/EtendoERP/attachments ] ; then
+    echo " * Backup already contains internal attachments; discarding the preserved reference"
+    [ "$PRESERVE_MODE" = "dir" ] && rm -rf "$PRESERVED_ATTACH_DIR"
+  else
+    echo " * Backup does not contain internal attachments. Restoring previous attachments"
+    case "$PRESERVE_MODE" in
+      symlink) ln -s "$PRESERVED_ATTACH_TARGET" /opt/EtendoERP/attachments ;;
+      mount)   mkdir -p /opt/EtendoERP/attachments && mount "$PRESERVED_ATTACH_TARGET" /opt/EtendoERP/attachments ;;
+      dir)     mv "$PRESERVED_ATTACH_DIR" /opt/EtendoERP/attachments ;;
+    esac
+  fi
 fi
 
 echo " * Restoring webapp"
@@ -131,11 +172,16 @@ fi
 
 ATTACH_PATH=$(awk -F = '/^attach.path/ {print $2}' /opt/EtendoERP/config/Openbravo.properties)
 if [ "$ATTACH_PATH" != "/opt/EtendoERP/attachments" ] ; then
-  echo " * Deleting attachments"
-  rm -rf $ATTACH_PATH || true
-  echo " * Restoring attachments"
-  mkdir -p $ATTACH_PATH
-  tar xf $TEMP_FOLDER/attach.tar* -C $ATTACH_PATH
+  ATTACH_ARCHIVE=$(compgen -G "$TEMP_FOLDER/attach.tar*" || true)
+  if [ -n "$ATTACH_ARCHIVE" ] ; then
+    echo " * Deleting attachments"
+    rm -rf "$ATTACH_PATH" || true
+    echo " * Restoring attachments"
+    mkdir -p "$ATTACH_PATH"
+    tar xf "$ATTACH_ARCHIVE" -C "$ATTACH_PATH"
+  else
+    echo " * No external attachments found in the backup. Preserving existing attachments."
+  fi
 fi
 
 echo " * Removing temporary folder"
